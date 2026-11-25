@@ -1,8 +1,6 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
-const path = require('path');
-const auth = require('basic-auth');
 
 const app = express();
 app.use(express.json());
@@ -13,12 +11,14 @@ app.use(cors());
 // MUDE ESTES DADOS PARA O SEU LOGIN!
 // ==========================================
 const ADMIN_USER = "admin"; 
-const ADMIN_PASS = "Alves41."; // <--- MUDE ESTA SENHA!
+const ADMIN_PASS = "agony123"; // <--- MUDE ESTA SENHA!
 
-// Middleware de Autenticação do Painel
+// Middleware de Autenticação do Painel (Manual, sem bibliotecas externas)
 const requireAdminAuth = (req, res, next) => {
-    const user = auth(req);
-    if (user && user.name === ADMIN_USER && user.pass === ADMIN_PASS) {
+    const b64auth = (req.headers.authorization || '').split(' ')[1] || '';
+    const [login, password] = Buffer.from(b64auth, 'base64').toString().split(':');
+
+    if (login && password && login === ADMIN_USER && password === ADMIN_PASS) {
         return next();
     }
     res.set('WWW-Authenticate', 'Basic realm="Agony Admin"');
@@ -114,7 +114,7 @@ app.post('/api/admin/reset', requireAdminAuth, (req, res) => {
 
 // Revogar Key (bloquear de vez)
 app.post('/api/admin/revoke', requireAdminAuth, (req, res) => {
-    const { key, revoked } = req.body; // revoked = true ou false
+    const { key, revoked } = req.body;
     db.run("UPDATE licenses SET revoked = ? WHERE key = ?", [revoked ? 1 : 0, key], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ message: "Status de revogação atualizado" });
@@ -222,7 +222,6 @@ app.get('/admin', requireAdminAuth, (req, res) => {
             loadKeys();
         }
 
-        // Carrega as keys ao abrir a página
         loadKeys();
     </script>
 </body>
@@ -232,6 +231,6 @@ app.get('/admin', requireAdminAuth, (req, res) => {
 
 // Inicia o servidor
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
     console.log(`Servidor Agony rodando na porta ${PORT}`);
 });
