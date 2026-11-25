@@ -1,18 +1,35 @@
-const path = require('path');
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
+const path = require('path');
+const auth = require('basic-auth');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
+// ==========================================
+// CONFIGURAÇÃO DO PAINEL ADMIN
+// MUDE ESTES DADOS PARA O SEU LOGIN!
+// ==========================================
+const ADMIN_USER = "admin"; 
+const ADMIN_PASS = "Alves41."; // <--- MUDE ESTA SENHA!
+
+// Middleware de Autenticação do Painel
+const requireAdminAuth = (req, res, next) => {
+    const user = auth(req);
+    if (user && user.name === ADMIN_USER && user.pass === ADMIN_PASS) {
+        return next();
+    }
+    res.set('WWW-Authenticate', 'Basic realm="Agony Admin"');
+    res.status(401).send('Acesso negado ao painel.');
+};
+
 // Cria o banco de dados local (arquivo agony.db)
-// O Railway monta o disco persistente na pasta /data. É para lá que o banco deve ir.
 const dbPath = process.env.NODE_ENV === 'production' ? '/data/agony.db' : './agony.db';
 const db = new sqlite3.Database(dbPath);
 
-// Cria a tabela se não existir
+// Cria a tabela e insere as keys
 db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS licenses (
         key TEXT PRIMARY KEY,
@@ -23,7 +40,6 @@ db.serialize(() => {
         revoked INTEGER DEFAULT 0
     )`);
 
-    // Insere as 20 keys (só insere se não existirem)
     const keys = [
         "AGONY-9X4L-P2Q8-7V1M", "AGONY-3T7W-K5B9-0J4N", "AGONY-6R1Y-H8C2-4F7G",
         "AGONY-2D5F-A9Z3-8B1Q", "AGONY-7M3K-4N6W-2E9R", "AGONY-1P8S-6T4U-3H5J",
@@ -39,7 +55,9 @@ db.serialize(() => {
     });
 });
 
-// Rota de Login
+// ==========================================
+// ROTAS DA API DO MOD (Minecraft)
+// ==========================================
 app.post('/api/login', (req, res) => {
     const { username, key, hwid } = req.body;
     
@@ -54,19 +72,15 @@ app.post('/api/login', (req, res) => {
         if (!row) return res.status(401).json({ error: "Key inválida" });
         if (row.revoked === 1) return res.status(403).json({ error: "Key revogada" });
 
-        // Se a key já tem dono
         if (row.hwid) {
-            // Se for o mesmo usuário e mesmo HWID, libera
             if (row.hwid === hwid && row.username === username) {
                 db.run("UPDATE licenses SET last_login = ? WHERE key = ?", [now, key]);
                 return res.status(200).json({ message: "Login autorizado" });
             } else {
-                // Se for outro PC ou outro usuário, bloqueia
                 return res.status(403).json({ error: "Key em uso em outro dispositivo" });
             }
         }
 
-        // Se a key está livre (primeiro login), vincula ao HWID
         db.run("UPDATE licenses SET username = ?, hwid = ?, first_login = ?, last_login = ? WHERE key = ?",
             [username, hwid, now, now, key],
             (err) => {
@@ -77,7 +91,147 @@ app.post('/api/login', (req, res) => {
     });
 });
 
-// Inicia o servidor na porta 8080
-app.listen(8080, () => {
-    console.log('Servidor Agony rodando na porta 8080');
+// ==========================================
+// ROTAS DA API DO PAINEL ADMIN
+// ==========================================
+
+// Listar todas as chaves
+app.get('/api/admin/keys', requireAdminAuth, (req, res) => {
+    db.all("SELECT * FROM licenses ORDER BY key ASC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+// Resetar Key (desvincular do PC e do usuário)
+app.post('/api/admin/reset', requireAdminAuth, (req, res) => {
+    const { key } = req.body;
+    db.run("UPDATE licenses SET username = NULL, hwid = NULL, first_login = NULL, last_login = NULL WHERE key = ?", [key], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: "Key resetada com sucesso" });
+    });
+});
+
+// Revogar Key (bloquear de vez)
+app.post('/api/admin/revoke', requireAdminAuth, (req, res) => {
+    const { key, revoked } = req.body; // revoked = true ou false
+    db.run("UPDATE licenses SET revoked = ? WHERE key = ?", [revoked ? 1 : 0, key], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: "Status de revogação atualizado" });
+    });
+});
+
+// ==========================================
+// FRONTEND DO PAINEL ADMIN (HTML/CSS/JS)
+// ==========================================
+app.get('/admin', requireAdminAuth, (req, res) => {
+    res.send(`
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Agony - Painel Admin</title>
+    <style>
+        body { background-color: #0f0507; color: #fee2e2; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; }
+        h1 { color: #dc2626; text-align: center; text-transform: uppercase; letter-spacing: 2px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; background-color: #190a0d; box-shadow: 0 0 10px rgba(220, 38, 38, 0.2); }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #3a1217; }
+        th { background-color: #7f1d1d; color: white; }
+        tr:hover { background-color: #241114; }
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .badge-free { background-color: #4ade80; color: #000; }
+        .badge-used { background-color: #fbbf24; color: #000; }
+        .badge-revoked { background-color: #ef4444; color: #fff; }
+        button { padding: 6px 12px; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; margin-right: 5px; }
+        .btn-reset { background-color: #3b82f6; color: white; }
+        .btn-revoke { background-color: #dc2626; color: white; }
+        .btn-unrevoke { background-color: #4ade80; color: #000; }
+        button:hover { opacity: 0.8; }
+        .hwid { font-family: monospace; font-size: 12px; color: #9c7b7e; }
+    </style>
+</head>
+<body>
+    <h1>Painel de Licenças - Agony</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Key</th>
+                <th>Usuário</th>
+                <th>HWID (PC)</th>
+                <th>Status</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody id="table-body">
+            <tr><td colspan="5" style="text-align:center;">Carregando...</td></tr>
+        </tbody>
+    </table>
+
+    <script>
+        async function loadKeys() {
+            const res = await fetch('/api/admin/keys');
+            const keys = await res.json();
+            const tbody = document.getElementById('table-body');
+            tbody.innerHTML = '';
+
+            keys.forEach(k => {
+                const tr = document.createElement('tr');
+                
+                let status = '';
+                if (k.revoked === 1) {
+                    status = '<span class="badge badge-revoked">REVOGADA</span>';
+                } else if (k.hwid) {
+                    status = '<span class="badge badge-used">EM USO</span>';
+                } else {
+                    status = '<span class="badge badge-free">LIVRE</span>';
+                }
+
+                tr.innerHTML = \`
+                    <td><strong>\${k.key}</strong></td>
+                    <td>\${k.username || '-'}</td>
+                    <td class="hwid">\${k.hwid ? k.hwid.substring(0, 15) + '...' : '-'}</td>
+                    <td>\${status}</td>
+                    <td>
+                        <button class="btn-reset" onclick="resetKey('\${k.key}')">Resetar</button>
+                        \${k.revoked === 1 
+                            ? \`<button class="btn-unrevoke" onclick="toggleRevoke('\${k.key}', false)">Reativar</button>\`
+                            : \`<button class="btn-revoke" onclick="toggleRevoke('\${k.key}', true)">Revogar</button>\`
+                        }
+                    </td>
+                \`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function resetKey(key) {
+            if (!confirm('Tem certeza que deseja desvincular a key ' + key + '? Ela ficará livre para outro PC.')) return;
+            await fetch('/api/admin/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key })
+            });
+            loadKeys();
+        }
+
+        async function toggleRevoke(key, revoked) {
+            await fetch('/api/admin/revoke', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key, revoked })
+            });
+            loadKeys();
+        }
+
+        // Carrega as keys ao abrir a página
+        loadKeys();
+    </script>
+</body>
+</html>
+    `);
+});
+
+// Inicia o servidor
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+    console.log(`Servidor Agony rodando na porta ${PORT}`);
 });
