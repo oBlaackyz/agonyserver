@@ -1,0 +1,2 @@
+# agonyserver
+chaves
