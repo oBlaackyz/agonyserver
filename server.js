@@ -11,7 +11,7 @@ app.use(cors());
 // MUDE ESTES DADOS PARA O SEU LOGIN!
 // ==========================================
 const ADMIN_USER = "admin"; 
-const ADMIN_PASS = "agony123"; // <--- MUDE ESTA SENHA!
+const ADMIN_PASS = "somegay41"; // <--- MUDE ESTA SENHA!
 
 // Middleware de Autenticação do Painel (Manual, sem bibliotecas externas)
 const requireAdminAuth = (req, res, next) => {
